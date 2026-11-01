@@ -1,87 +1,82 @@
-# CodeDetector
+# CodeDetector 1.1 — OCR ในเครื่อง
 
-แอปมือถือภาษาไทยสำหรับถ่ายภาพอ่าน MFG / EXP / รหัสเครื่องจักร ตรวจเทียบ Standard และสร้างรายงานภาพแชร์ LINE
+เว็บภาษาไทยสำหรับมือถือ: ถ่าย/อัปโหลดภาพ → อ่าน Code ในเครื่อง → ตรวจ Standard → เก็บและแชร์รายงาน ไม่ต้องมีบัญชี ChatGPT หรือเครดิต OpenAI สำหรับการตรวจทั่วไป
 
-## ใช้งาน
+## Standard พร้อมใช้
 
-1. เปิดเว็บ HTTPS จากมือถือ ไม่ต้องติดตั้งหรือเข้าสู่ ChatGPT สำหรับการตรวจทั่วไป
-2. ผู้ดูแลเข้า มาตรฐาน → สำหรับผู้ดูแล และลงชื่อเข้า ChatGPT ด้วยบัญชีที่ได้รับอนุญาต เพิ่ม Standard จริงครั้งแรก
-3. ถ่าย/อัปโหลดภาพแล้วกดตรวจ ระบบจับคู่ SKU/บาร์โค้ด/ชื่อสินค้าตามค่าที่กำหนดไว้ ถ้าไม่พบให้เลือกสินค้า
-4. รายงานบันทึกใน IndexedDB อัตโนมัติ ดูย้อนหลัง ดาวน์โหลด PNG หรือแชร์ได้
+| รูปแบบ | วันที่ | เวลาและเครื่อง |
+| --- | --- | --- |
+| สองบรรทัด | DD/MM/YYYY บรรทัดบน | HH:MM:SS รหัส บรรทัดล่าง |
+| หนึ่งบรรทัด | DDMMYYYY | ตามด้วย HH:MM รหัส ในบรรทัดเดียว |
 
-ผู้ใช้ไม่ต้องกรอกข้อมูลเทียบทุกครั้ง แต่ระบบต้องมี Standard ที่ถูกต้องก่อน จึงจะรับรองว่าผ่านได้
+- ปี ค.ศ. = ปีตรวจตาม Asia/Bangkok + 1; วันเดือนต้องมีจริง แต่ไม่ต้องตรงวันตรวจ
+- เวลา 24 ชั่วโมง 00–23:00–59[:00–59] ไม่เทียบเวลาปัจจุบัน
+- รหัสเครื่อง: ตรวจเฉพาะการมีรหัส ตัวอักษรอังกฤษ/ตัวเลข ไม่เทียบรายชื่อเครื่อง
+- ต้องมีช่องว่างก่อนรหัส ไม่เติมเครื่องหมายหรือช่องว่างเพื่อให้ผ่าน
+- เป็นวันควรบริโภคก่อน/หมดอายุ ไม่ต้องมี MFG ไม่ใช้กฎ 365 วัน
+- เพิ่ม preset สองชุดใน D1 ด้วย ID คงที่ INSERT OR IGNORE จึงไม่เพิ่มซ้ำและไม่ทับการปิดใช้งานของผู้ดูแล
+- Standard สินค้าเดิมและกฎเดิมยังอยู่ เลือกเองได้; OCR รุ่นนี้เน้น Code สองรูปแบบ ไม่อ่านชื่อไทย/MFG/SKU ด้วย AI เหมือนรุ่นก่อน ช่องที่ไม่ได้อ่านต้องตรวจทานกับภาพ
 
-## เริ่มพัฒนา
+## OCR และหลักฐาน
 
-ต้องมี Node 22.13 ขึ้นไป (ตรวจด้วย Node 24 บน Windows)
+ใช้ Tesseract.js **7.0.0**, English LSTM ใน Web Worker เดียวที่ใช้ซ้ำ ไฟล์ Worker/WASM/eng model อยู่ที่ /ocr/ บนเว็บไซต์เดียวกัน ดาวน์โหลดครั้งแรกต้องใช้อินเทอร์เน็ต ไม่มีการส่งภาพไป OpenAI หรือสลับไปบริการเสียเงิน
 
-- npm ci
-- สร้าง .env.local ตามชื่อค่าตัวอย่างใน .env.example เก็บคีย์เฉพาะไฟล์ ignored นี้
-- npm run build
-- Apply migration เฉพาะฐานข้อมูล local:
-  node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_awesome_the_phantom.sql
-- npm run dev แล้วเปิด URL loopback ที่คำสั่งแสดง
-- Local preview login จำลอง seedy@sites.test เฉพาะ development; production ใช้ Sites ChatGPT sign-in จริง
+อ่านภาพเต็มก่อน แล้วใช้ตำแหน่ง Code กลับไปอ่านจากภาพต้นฉบับ มีปุ่มครอบโค้ดและหมุนภาพ ภาพที่แสดงในแอปย่อสำหรับรายงาน แต่เก็บไฟล์ต้นฉบับในหน่วยความจำระหว่างการตรวจ ไม่บันทึกไฟล์ภาพเต็มขนาดไว้ถาวร
 
-npm run typecheck ตรวจ TypeScript · npm test ทดสอบกฎ · npm run build สร้าง Worker
+ใช้การปรับภาพเทาและเชื่อมจุดโดยไม่แทนตัวอักษร ใช้กรอบคำ/บรรทัดแยก Code จากข้อความบนบรรจุภัณฑ์:
+- ผ่านอัตโนมัติเมื่อทุกกฎตรงและคะแนนคำของแต่ละช่อง >=85 พร้อมหลักฐานบรรทัด
+- คะแนนต่ำ ข้อมูลขาด หรือผลหลายรอบกำกวม → ต้องตรวจซ้ำ
+- ข้อผิดที่ยืนยันได้ → ไม่ผ่าน แม้ช่องอื่นยังอ่านไม่ได้
+- คะแนน OCR ไม่ใช่เปอร์เซ็นต์ความถูกต้อง ภาพจุด แสงสะท้อน และภาพเอียงอาจต้องถ่ายใหม่/ครอบภาพ/ยืนยันกับภาพ
+- ยกเลิกได้; เกิน 60 วินาทีจะหยุด Worker และให้ลองใหม่
+- แก้ข้อความต้องยืนยันวัน เวลา รหัส ช่องว่าง และจำนวนบรรทัดกับภาพจริง สร้างรายงาน ID ใหม่ ระบุผู้ใช้ยืนยัน และเก็บผล OCR/รายงานเดิม
 
-## Standard และผลตรวจ
+รายงานมีภาพเต็ม ภาพบริเวณ Code สินค้า/Standard ที่ใช้ วันที่ เวลา รหัส ปีที่คาดหวัง ผลและเหตุผลรายข้อ คะแนนและตำแหน่งข้อความในข้อมูลสำรอง รองรับรายงานเก่าที่ไม่มีข้อมูล OCR
 
-- วันที่ 9 รูปแบบ ภาษาเดือนอังกฤษ/ไทย ตัวเลขไทย พ.ศ./ค.ศ. ฐานปีสองหลัก 2000/2500 ตามปฏิทินที่ผู้ดูแลระบุ
-- EXP = MFG + จำนวนวันหรือเดือน แบบเดือนใช้วันสุดท้ายของเดือนเมื่อไม่มีวันเดิม
-- เทียบวันตรวจตาม Asia/Bangkok; วัน EXP ยังถือว่าไม่หมดอายุ
-- ข้อผิดที่ยืนยันได้ → ไม่ผ่าน; ไม่มีข้อผิดแน่นอนแต่ข้อมูลจำเป็นไม่ครบ → ต้องตรวจซ้ำ; ครบและผ่านทุกกฎ → ผ่าน
-- ไม่แปลง O เป็น 0 ไม่เดาวันที่ขาด ไม่ใช้อายุสินค้าที่ AI คำนวณจากภาพเป็น Standard ของภาพเดียวกัน
-- จับคู่ SKU/บาร์โค้ดตรงกันก่อนชื่อสินค้า หากหลาย Standard ตรงกันต้องเลือก ไม่จับคู่แบบคล้ายแล้วผ่านทันที
-- ใช้สินค้าที่จำไว้เฉพาะเมื่อภาพไม่มีตัวระบุสินค้า หากมี SKU/ชื่ออื่นที่ไม่ตรงจะไม่ใช้ Standard เก่า
-- รายงานเก็บสำเนา Standard และผลอ่านเดิม การแก้ข้อความสร้าง ID ใหม่ โดยเก็บฉบับก่อนหน้า
+## พัฒนาและทดสอบ
 
-## ที่เก็บข้อมูล
+ต้องมี Node >=22.13 (ตรวจด้วย Node 24 บน Windows)
+
+1. npm ci
+2. สร้าง .env.local จาก .env.example; ไม่จำเป็นต้องตั้ง OPENAI_API_KEY
+3. ไฟล์ OCR อยู่ใน public/ocr แล้ว; สร้างซ้ำ/ตรวจ hash ด้วย node scripts/prepare-ocr-assets.mjs
+4. npm run build
+5. ฐานข้อมูล local ครั้งแรก: node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_awesome_the_phantom.sql
+6. npm run dev แล้วเปิด URL ที่แสดง
+
+npm test ทดสอบกฎและไฟล์สำรอง · npm run typecheck ตรวจ TypeScript · npm run build สร้าง Worker
+Local sign-in ใช้บัญชีจำลองเฉพาะ development; production ใช้ Sites identity และ ADMIN_EMAILS สำหรับจัดการ Standard
+
+## ข้อมูลและ API
 
 | ข้อมูล | ที่เก็บ |
 | --- | --- |
-| ตั้งค่า / สินค้าล่าสุด / cache Standard | localStorage |
-| ภาพและรายงาน / ประวัติแก้ข้อความ | IndexedDB บนอุปกรณ์ |
-| Standard ที่เผยแพร่ / ตัวนับโควตา / metadata แชร์ | D1 |
-| ภาพรายงานที่แชร์ผ่าน LIFF และภาพตัวอย่าง | R2 |
+| ตั้งค่าและ cache Standard | localStorage |
+| ภาพรายงาน ประวัติ และ audit การแก้ | IndexedDB บนอุปกรณ์ |
+| Standard กลาง ตัวนับโควตา metadata แชร์ | D1 |
+| ภาพรายงานที่กดแชร์ LIFF และภาพตัวอย่าง | R2 |
 
-รายงานไม่ซิงก์ระหว่างเครื่อง/เบราว์เซอร์ LINE in-app browser กับ Safari/Chrome อาจใช้พื้นที่เก็บแยกกัน ส่งออกข้อมูลจากหน้าตั้งค่าก่อนล้างข้อมูลเว็บ
+ประวัติไม่ซิงก์ระหว่างเครื่อง LINE in-app browser กับ Safari/Chrome อาจใช้ที่เก็บต่างกัน สำรองในหน้าตั้งค่าก่อนล้างข้อมูลเว็บ
 
-ภาพต้นทางแชร์เปิดได้ 7 วันแล้วตอบ 410/404 ไม่ใช้ CDN cache งานรายชั่วโมงลบไฟล์หมดอายุ สำเนาที่ LINE หรือผู้รับเก็บไว้อาจยังอยู่
+- GET /api/config ระบุ ocrMode:local, aiReady:false
+- GET /api/standards เป็น public; POST ต้องเป็นผู้ดูแลที่อนุญาต
+- **POST /api/analyze ตอบ HTTP 410 ก่อนอ่าน request/คีย์หรือเรียก upstream** ปิดการเรียก OpenAI แม้ client เก่ายังส่งมา ไม่ลบหรือเพิกถอนคีย์ที่มีอยู่
+- POST /api/shares อัปโหลดเฉพาะภาพรายงานที่กดแชร์; GET /share/:token เปิดภาพได้ 7 วัน
+- POST /api/maintenance และ POST /mcp cleanup ยังจำกัดสิทธิ์เดิม งานรายชั่วโมงลบไฟล์หมดอายุ
+- โควตาแชร์เริ่มต้น 200 ครั้ง/วันทั้งระบบ และ 5 ครั้ง/นาที/IP ปรับ DAILY_SHARE_LIMIT/PER_IP_MINUTE_LIMIT; โควตาอ่านภาพ API เดิมไม่ใช้ในโหมดนี้
+- สำเนาที่ LINE/ผู้รับดาวน์โหลดไว้อาจยังอยู่หลังไฟล์แชร์หมดอายุ
+- ไม่มี service worker สำหรับเปิดเว็บใหม่แบบ offline; เมื่อหน้าแอปและ Worker โหลดพร้อมแล้ว อ่านซ้ำกับ Standard ที่ cache ได้ระหว่างเน็ตหลุด การโหลดครั้งแรก Standard ล่าสุด และ LIFF ยังใช้อินเทอร์เน็ต
 
-## LINE LIFF — เจ้าของตั้งครั้งเดียว
+## LINE LIFF
 
-1. เข้า [LINE Developers Console](https://developers.line.biz/console/) สร้าง Provider และ LINE Login channel ชนิด Web app
-2. เพิ่ม LIFF app ขนาด Full ใช้ Endpoint URL เป็น URL production ของ CodeDetector
-3. เปิด scope ที่จำเป็นสำหรับ LIFF login และเปิด shareTargetPicker เจ้าของบัญชียอมรับข้อตกลงเอง
-4. เปลี่ยน channel เป็น Published เพื่อให้คนนอกบทบาท developer/tester ใช้ได้
-5. เก็บ LIFF ID ใน production environment LINE_LIFF_ID แล้ว deploy อีกครั้ง ไม่ต้องใช้ Channel secret ใน browser
-6. เปิด LIFF URL บนมือถือ ทดสอบ login → เลือกผู้รับ → ภาพและข้อความมาถึง LINE จริง
-7. หาก LIFF ยังไม่พร้อม มีปุ่มแชร์ไฟล์/ดาวน์โหลด ทางนี้ไม่อัปโหลด R2
+1. เจ้าของตั้ง LINE Login channel และ LIFF app ที่ LINE Developers Console ให้ Endpoint URL ตรงกับ production
+2. เปิด shareTargetPicker และเผยแพร่ channel สำหรับผู้ใช้งานจริง
+3. ตั้ง LINE_LIFF_ID ใน environment แล้ว deploy; ไม่ใช้ Channel secret ใน browser
+4. ทดสอบบนมือถือ login → เลือกเพื่อน/กลุ่ม → ได้ภาพและข้อความจริง
+5. ถ้ายังไม่ตั้ง LIFF ใช้ดาวน์โหลดภาพหรือแชร์ไฟล์ผ่านเมนูมือถือแล้วเลือก LINE
 
-การยกเลิกแชร์ไม่แสดงว่าส่งสำเร็จ หลังกลับจาก LINE login ให้กดแชร์รายงานเดิมอีกครั้ง
-[เอกสาร LIFF](https://developers.line.biz/en/docs/liff/developing-liff-apps/)
+ยังไม่ได้ตั้ง LIFF ID และยังไม่ได้ตรวจการส่งถึงผู้รับ LINE จริง ดูผลตรวจรับใน [VALIDATION.md](VALIDATION.md)
 
-## API และคีย์
+อ้างอิงการตั้ง Worker: [Tesseract.js API](https://github.com/naptha/tesseract.js/blob/master/docs/api.md)
+อ้างอิง LINE: [LIFF](https://developers.line.biz/en/docs/liff/developing-liff-apps/)
 
-GET /api/config, GET /api/standards เป็น public; POST /api/standards ต้องผ่าน Sites identity และ email ใน ADMIN_EMAILS
-POST /api/analyze ใช้ Responses API Structured Outputs และ store:false; กฎตรวจแยกจาก AI
-POST /api/shares รับรายงานและภาพตัวอย่าง; GET /share/:token ให้ LINE อ่านภาพ
-POST /api/maintenance ใช้ bearer สำหรับระบบ; POST /mcp ให้เครื่องมือ cleanup เฉพาะผู้ดูแล
-
-คีย์อยู่ server environment ไม่รวมใน client bundle, git หรือรายงาน ตั้ง production env ผ่าน Sites tools แล้ว deploy เพื่อใช้ revision ใหม่
-โควตาเริ่มต้น 200 scans/day และ 200 shares/day ทั้งระบบ, 5 requests/minute ต่อ IP ต่อประเภท ปรับผ่าน environment ได้ วันโควตานับ UTC; เวลาในรายงานใช้ประเทศไทย
-นับความพยายามแม้ upstream ล้มเหลว เพื่อกันเรียกซ้ำไม่จำกัด ผู้ใช้ไม่ต้องมี API key ส่วนตัว
-store:false ไม่ใช่การรับรอง zero data retention ของผู้ให้บริการ
-
-## OpenAI quota
-
-ทดสอบ API จริงวันที่ 1 พฤศจิกายน 2026 ตอบ HTTP 429, credit_balance_exhausted / insufficient_quota: ต้องเติมเครดิตก่อนอ่านภาพจริง
-[API Billing](https://platform.openai.com/settings/organization/billing/) แยกจากสมาชิก ChatGPT
-คีย์ CodexAICode ตั้งอายุ 7 วัน ต้องเปลี่ยนเมื่อหมดอายุ ไม่เปลี่ยนคีย์อัตโนมัติ
-งานทดลองง่ายอาจพิจารณา gpt-6-luna ภายหลัง แต่เปลี่ยนโมเดลไม่แก้เครดิตหมด และยังไม่ได้ทดสอบโมเดลนั้นในแอปนี้
-
-## การตรวจรับ
-
-ดู VALIDATION.md แยกการทดสอบกฎ/จำลองบริการเพื่อทดสอบ UI ออกจาก OpenAI และ LINE จริง
-TEST PRODUCT และภาพสังเคราะห์ใช้เฉพาะ local/QA ไม่ seed เข้า production

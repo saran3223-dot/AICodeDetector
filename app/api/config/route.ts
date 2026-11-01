@@ -4,7 +4,8 @@ import { env } from "cloudflare:workers";
 export async function GET() {
   const user = await getChatGPTUser();
   return json({
-    aiReady: !!setting("OPENAI_API_KEY"),
+    aiReady: false,
+    ocrMode: "local",
     lineReady: !!setting("LINE_LIFF_ID"),
     liffId: setting("LINE_LIFF_ID"),
     admin: await isAdmin(),

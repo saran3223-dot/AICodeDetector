@@ -10,6 +10,14 @@ export type DateFormat =
   | "DDMMYYYY"
   | "DDMMYY";
 export interface Standard {
+  kind?: "product" | "printed_code";
+  codeRule?: {
+    lines: 1 | 2;
+    timeFormat: "HH:MM" | "HH:MM:SS";
+    yearOffset: 1;
+    machinePolicy: "presence";
+    minConfidence: number;
+  };
   id: string;
   name: string;
   sku: string;
@@ -28,6 +36,8 @@ export interface Standard {
   updatedAt: string;
 }
 export interface Extraction {
+  time?: string | null;
+  code?: CodeEvidence;
   rawText: string;
   productName: string | null;
   sku: string | null;
@@ -37,6 +47,33 @@ export interface Extraction {
   machine: string | null;
   ambiguousFields: ("product" | "mfg" | "exp" | "machine")[];
   notes: string[];
+}
+export interface Box {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+export interface OcrWord {
+  text: string;
+  confidence: number;
+  bbox: Box;
+}
+export interface OcrLine {
+  text: string;
+  confidence: number;
+  bbox: Box;
+  words: OcrWord[];
+}
+export interface CodeEvidence {
+  engine: "tesseract.js@7.0.0";
+  lines: OcrLine[];
+  layout: 1 | 2 | null;
+  confidence: { date: number; time: number; machine: number };
+  ambiguous: ("date" | "time" | "machine" | "layout")[];
+  crop?: Box;
+  manualFields?: ("exp" | "time" | "machine")[];
+  manualText?: string;
 }
 export interface Check {
   field: string;
@@ -53,6 +90,7 @@ export interface InspectionResult {
   match: "automatic" | "selected" | "remembered" | "none" | "ambiguous";
 }
 export interface Report extends InspectionResult {
+  codeImage?: string;
   id: string;
   createdAt: string;
   image: string;
@@ -63,6 +101,7 @@ export interface Report extends InspectionResult {
   corrections: { at: string; before: Extraction; after: Extraction }[];
 }
 export interface ServiceConfig {
+  ocrMode?: "local";
   aiReady: boolean;
   lineReady: boolean;
   liffId: string;

@@ -141,6 +141,56 @@ export function StandardEditor({
       setBusy(false);
     }
   }
+  if (value?.kind === "printed_code")
+    return (
+      <Modal
+        title="Standard รูปแบบ Code"
+        onClose={() => {
+          if (!busy) onClose();
+        }}
+      >
+        <form onSubmit={submit}>
+          {error && <div className="alert error">{error}</div>}
+          <div className="ocr-policy">
+            <h3>{value.name}</h3>
+            <p>
+              {value.codeRule?.lines === 2
+                ? "บรรทัดบน DD/MM/YYYY · บรรทัดล่าง HH:MM:SS รหัสเครื่อง"
+                : "DDMMYYYY HH:MM รหัสเครื่อง"}
+            </p>
+            <p>
+              ปี ค.ศ. = ปีตรวจตามเวลาไทย +1 · ไม่บังคับวันเดือนให้ตรงวันตรวจ
+            </p>
+            <p>รหัสเครื่อง: ตรวจเฉพาะการมีรหัส · เวลา 24 ชั่วโมง</p>
+            <p>
+              เกณฑ์ OCR ขั้นต่ำ 85 เป็นคะแนนของตัวอ่าน
+              ไม่ใช่เปอร์เซ็นต์ความถูกต้อง
+            </p>
+          </div>
+          <label className="checkbox-confirm">
+            <input
+              type="checkbox"
+              checked={form.enabled}
+              onChange={(e) => field("enabled", e.target.checked)}
+            />
+            เปิดใช้งาน Standard นี้
+          </label>
+          <div className="modal-actions">
+            <button
+              className="button secondary"
+              type="button"
+              onClick={onClose}
+              disabled={busy}
+            >
+              ปิด
+            </button>
+            <button className="button primary" disabled={busy}>
+              บันทึกสถานะ
+            </button>
+          </div>
+        </form>
+      </Modal>
+    );
   return (
     <Modal
       title={value ? "แก้ไข Standard" : "เพิ่ม Standard สินค้า"}
@@ -352,6 +402,13 @@ export function CorrectionEditor({
       machine: report.extraction.machine || "",
     }),
     [confirmed, setConfirmed] = useState(false);
+  if (
+    report.extraction.code &&
+    (!report.standard || report.standard.kind === "printed_code")
+  )
+    return (
+      <CodeCorrectionEditor report={report} onClose={onClose} onSave={onSave} />
+    );
   return (
     <Modal title="แก้ไขข้อความที่อ่านจากภาพ" onClose={onClose}>
       <p className="muted small-copy">
@@ -414,6 +471,105 @@ export function CorrectionEditor({
             disabled={!confirmed}
           >
             ตรวจและบันทึกฉบับใหม่
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function CodeCorrectionEditor({
+  report,
+  onClose,
+  onSave,
+}: {
+  report: Report;
+  onClose: () => void;
+  onSave: (e: Extraction) => void;
+}) {
+  const [text, setText] = useState(
+    report.extraction.code?.manualText ||
+      report.extraction.code?.lines.map((l) => l.text).join("\n") ||
+      "",
+  );
+  const [confirmed, setConfirmed] = useState(false);
+  return (
+    <Modal title="ตรวจทาน Code จากภาพต้นฉบับ" onClose={onClose}>
+      <p className="muted small-copy">
+        ผลนี้จะระบุว่า “ยืนยันโดยผู้ใช้” พร้อมเก็บผลอ่าน OCR เดิมไว้
+        ห้ามเติมตัวคั่นที่ไม่มีอยู่จริงบนผลิตภัณฑ์
+      </p>
+      <img
+        className="correction-image"
+        src={report.codeImage || report.image}
+        alt="ภาพโค้ดต้นฉบับสำหรับตรวจทาน"
+      />
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!confirmed) return;
+          const rows = text
+            .replace(/\r\n?/g, "\n")
+            .trim()
+            .split("\n")
+            .map((l) => l.trim());
+          const first = rows[0]?.split(/[ \t]+/) ?? [];
+          const last =
+            rows.length === 1
+              ? first.slice(1)
+              : (rows.at(-1)?.split(/[ \t]+/) ?? []);
+          onSave({
+            ...report.extraction,
+            exp: first[0] || null,
+            time: last[0] || null,
+            machine: last[1] || null,
+            code: {
+              engine: "tesseract.js@7.0.0",
+              lines: report.extraction.code?.lines ?? [],
+              layout: rows.length === 1 ? 1 : rows.length === 2 ? 2 : null,
+              confidence: report.extraction.code?.confidence ?? {
+                date: 0,
+                time: 0,
+                machine: 0,
+              },
+              ambiguous: [],
+              crop: report.extraction.code?.crop,
+              manualFields: ["exp", "time", "machine"],
+              manualText: rows.join("\n"),
+            },
+          });
+        }}
+      >
+        <label className="field">
+          ข้อความ Code ตามภาพ (คงจำนวนบรรทัดและตัวคั่นจริง)
+          <textarea
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              setConfirmed(false);
+            }}
+            rows={4}
+            maxLength={2000}
+          />
+        </label>
+        <label className="checkbox-confirm">
+          <input
+            type="checkbox"
+            checked={confirmed}
+            onChange={(e) => setConfirmed(e.target.checked)}
+          />
+          ตรวจวัน เวลา รหัส ช่องว่าง และการขึ้นบรรทัดเทียบกับภาพจริงแล้ว
+        </label>
+        <div className="modal-actions">
+          <button type="button" className="button secondary" onClick={onClose}>
+            ยกเลิก
+          </button>
+          <button
+            type="submit"
+            className="button primary"
+            disabled={!confirmed || !text.trim()}
+          >
+            ยืนยันและสร้างรายงานฉบับใหม่
           </button>
         </div>
       </form>

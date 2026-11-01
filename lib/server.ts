@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { getChatGPTUser } from "@/app/chatgpt-auth";
 import type { Standard } from "./types";
+import { CODE_STANDARDS } from "./code-standards";
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -96,6 +97,17 @@ export function handleError(e: unknown) {
   );
 }
 export async function readStandards(): Promise<Standard[]> {
+  // Trusted presets explicitly approved by the owner. INSERT OR IGNORE preserves
+  // edits/disabled presets and makes initialization safe across concurrent reads.
+  await database().batch(
+    CODE_STANDARDS.map((s) =>
+      database()
+        .prepare(
+          "INSERT OR IGNORE INTO standards (id,data,revision,updated_at) VALUES (?,?,?,?)",
+        )
+        .bind(s.id, JSON.stringify(s), s.revision, s.updatedAt),
+    ),
+  );
   const r = await database()
     .prepare("SELECT data FROM standards ORDER BY updated_at DESC")
     .all<{ data: string }>();

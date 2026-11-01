@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { extractionSchema, standardInput } from "./validation";
+import { extractionSchema, standardInput } from "./validation.ts";
 import type { Report } from "./types";
 const outcome = z.enum(["pass", "fail", "review"]);
 const standard = standardInput.and(
@@ -16,6 +16,11 @@ const report = z.object({
     .string()
     .max(5_400_000)
     .regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/),
+  codeImage: z
+    .string()
+    .max(5_400_000)
+    .regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/)
+    .optional(),
   extraction: extractionSchema,
   productName: z.string().max(200),
   model: z.string().max(100),

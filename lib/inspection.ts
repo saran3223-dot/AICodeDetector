@@ -5,6 +5,7 @@ import type {
   InspectionResult,
   Standard,
 } from "./types";
+import { inspectCode } from "./code-inspection.ts";
 export const DATE_FORMATS: DateFormat[] = [
   "DD/MM/YYYY",
   "DD/MM/YY",
@@ -162,6 +163,8 @@ export function inspect(
   match: InspectionResult["match"] = "none",
   today = bangkokToday(),
 ): InspectionResult {
+  if (s?.kind === "printed_code" && s.codeRule)
+    return inspectCode(e, s, match, today);
   const checks: Check[] = [];
   const normalized: { mfg: string | null; exp: string | null } = {
     mfg: null,

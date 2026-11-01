@@ -137,6 +137,47 @@ export async function renderReport(report: Report): Promise<Blob> {
   c.fillRect(56, y + 16, 968, imgHeight + 20);
   c.drawImage(image, 56 + (968 - imgWidth) / 2, y + 26, imgWidth, imgHeight);
   y += imgHeight + 80;
+  if (report.codeImage) {
+    const code = await loadImage(report.codeImage);
+    const h = Math.min(300, (code.naturalHeight * 968) / code.naturalWidth);
+    const w = (h * code.naturalWidth) / code.naturalHeight;
+    text("ภาพบริเวณโค้ดที่ใช้ตรวจ", 56, 968, 22);
+    c.drawImage(code, 56 + (968 - w) / 2, y + 10, w, h);
+    y += h + 60;
+  }
+  if (report.extraction.code) {
+    const code = report.extraction.code;
+    text(
+      "รูปแบบที่พบ: " +
+        (code.layout ? code.layout + " บรรทัด" : "ยืนยันไม่ได้"),
+      56,
+      968,
+      22,
+    );
+    text("รหัสเครื่อง: ตรวจเฉพาะการมีรหัส", 56, 968, 22);
+    text(
+      "คะแนน OCR วันที่ " +
+        Math.round(code.confidence.date) +
+        " / เวลา " +
+        Math.round(code.confidence.time) +
+        " / รหัส " +
+        Math.round(code.confidence.machine),
+      56,
+      968,
+      20,
+      "#62718a",
+      30,
+    );
+    text(
+      "เกณฑ์แต่ละช่อง 85 · คะแนนไม่ใช่เปอร์เซ็นต์ความถูกต้อง",
+      56,
+      968,
+      20,
+      "#62718a",
+      30,
+    );
+    y += 20;
+  }
   text("ผลตรวจรายข้อ", 56, 968, 28);
   for (const check of report.checks) {
     y += 15;
@@ -199,6 +240,7 @@ export async function renderReport(report: Report): Promise<Blob> {
     );
   }
   y += 24;
+  text("ตัวอ่าน: " + report.model, 56, 968, 18, "#62718a", 28);
   text(
     "ผลตรวจตาม Standard ที่ระบุ ณ เวลาตรวจ · เก็บภาพต้นฉบับเพื่อการทวนสอบ",
     56,

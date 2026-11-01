@@ -1,7 +1,17 @@
 import { z } from "zod";
-import { DATE_FORMATS } from "./inspection";
+import { DATE_FORMATS } from "./inspection.ts";
 export const standardInput = z
   .object({
+    kind: z.enum(["product", "printed_code"]).optional(),
+    codeRule: z
+      .object({
+        lines: z.union([z.literal(1), z.literal(2)]),
+        timeFormat: z.enum(["HH:MM", "HH:MM:SS"]),
+        yearOffset: z.literal(1),
+        machinePolicy: z.literal("presence"),
+        minConfidence: z.literal(85),
+      })
+      .optional(),
     id: z.string().uuid().optional(),
     name: z.string().trim().min(1).max(120),
     sku: z.string().trim().min(1).max(80),
@@ -34,7 +44,30 @@ export const standardInput = z
     const issue = (message: string) => c.addIssue({ code: "custom", message });
     if (!Object.values(s.required).some(Boolean))
       issue("ต้องเลือกอย่างน้อยหนึ่งรายการตรวจ");
-    if (s.required.machine && !s.machines.length)
+    if (s.kind === "printed_code") {
+      if (
+        !s.codeRule ||
+        s.calendar !== "CE" ||
+        s.required.mfg ||
+        !s.required.exp ||
+        !s.required.machine ||
+        s.shelfLife !== null ||
+        s.checkMfgToday ||
+        s.checkExpired
+      )
+        issue(
+          "Standard Code ต้องใช้ปี ค.ศ. ตรวจเฉพาะวันหมดอายุ เวลา และการมีรหัส",
+        );
+      if (
+        s.codeRule &&
+        (s.codeRule.lines === 2
+          ? s.dateFormat !== "DD/MM/YYYY" ||
+            s.codeRule.timeFormat !== "HH:MM:SS"
+          : s.dateFormat !== "DDMMYYYY" || s.codeRule.timeFormat !== "HH:MM")
+      )
+        issue("รูปแบบ Code ไม่ตรงกับจำนวนบรรทัด");
+    } else if (s.codeRule) issue("codeRule ใช้ได้เฉพาะ Standard รูปแบบ Code");
+    if (s.kind !== "printed_code" && s.required.machine && !s.machines.length)
       issue("ต้องระบุเครื่องจักรที่อนุญาต");
     if (s.shelfLife !== null && (!s.required.mfg || !s.required.exp))
       issue("การตรวจอายุสินค้าต้องอ่านทั้งวันผลิตและวันหมดอายุ");
@@ -47,6 +80,57 @@ export const standardInput = z
       issue("ฐานปีสองหลักไม่ตรงกับปฏิทิน");
   });
 export const extractionSchema = z.object({
+  time: z.string().max(100).nullable().optional(),
+  code: z
+    .object({
+      engine: z.literal("tesseract.js@7.0.0"),
+      layout: z.union([z.literal(1), z.literal(2)]).nullable(),
+      lines: z
+        .array(
+          z.object({
+            text: z.string().max(2000),
+            confidence: z.number().min(0).max(100),
+            bbox: z.object({
+              x0: z.number(),
+              y0: z.number(),
+              x1: z.number(),
+              y1: z.number(),
+            }),
+            words: z
+              .array(
+                z.object({
+                  text: z.string().max(500),
+                  confidence: z.number().min(0).max(100),
+                  bbox: z.object({
+                    x0: z.number(),
+                    y0: z.number(),
+                    x1: z.number(),
+                    y1: z.number(),
+                  }),
+                }),
+              )
+              .max(200),
+          }),
+        )
+        .max(20),
+      confidence: z.object({
+        date: z.number().min(0).max(100),
+        time: z.number().min(0).max(100),
+        machine: z.number().min(0).max(100),
+      }),
+      ambiguous: z.array(z.enum(["date", "time", "machine", "layout"])),
+      crop: z
+        .object({
+          x0: z.number(),
+          y0: z.number(),
+          x1: z.number(),
+          y1: z.number(),
+        })
+        .optional(),
+      manualFields: z.array(z.enum(["exp", "time", "machine"])).optional(),
+      manualText: z.string().max(2000).optional(),
+    })
+    .optional(),
   rawText: z.string().max(12000),
   productName: z.string().max(200).nullable(),
   sku: z.string().max(100).nullable(),

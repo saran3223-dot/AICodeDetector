@@ -1,5 +1,10 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { Crop } from "lucide-react";
+import type { Box } from "@/lib/types";
+import { recognizeLocal, rotateSource } from "@/lib/local-ocr";
+import { selectCodeStandard } from "@/lib/code-parser";
+import { CropEditor } from "./crop-editor";
 import {
   Activity,
   ArrowDownToLine,
@@ -57,7 +62,6 @@ import {
   downloadBlob,
   imageFromFile,
   renderReport,
-  rotateImage,
   previewDataUrl,
 } from "@/lib/report-image";
 import { StandardEditor, CorrectionEditor, Modal } from "./editors";
@@ -188,7 +192,16 @@ export default function CodeDetector() {
     [correcting, setCorrecting] = useState(false),
     [help, setHelp] = useState(false),
     [deleting, setDeleting] = useState<Report | null>(null),
-    [date, setDate] = useState("");
+    [date, setDate] = useState(""),
+    [source, setSource] = useState(""),
+    [crop, setCrop] = useState<Box | undefined>(undefined),
+    [cropping, setCropping] = useState(false),
+    [ocrProgress, setOcrProgress] = useState({
+      progress: 0,
+      message: "กำลังเตรียมตัวอ่าน",
+    });
+  const abortOcr = useRef<AbortController | null>(null);
+  const sourceRef = useRef("");
   const upload = useRef<HTMLInputElement>(null),
     camera = useRef<HTMLInputElement>(null),
     importer = useRef<HTMLInputElement>(null),
@@ -271,6 +284,13 @@ export default function CodeDetector() {
     setRemembered(id);
     writeSetting("last-product", id);
   }
+  useEffect(
+    () => () => {
+      abortOcr.current?.abort();
+      if (sourceRef.current) URL.revokeObjectURL(sourceRef.current);
+    },
+    [],
+  );
   async function pick(file?: File) {
     if (!file || busy) return;
     const seq = ++sequence.current;
@@ -278,6 +298,10 @@ export default function CodeDetector() {
     setError("");
     try {
       const src = await imageFromFile(file);
+      if (sourceRef.current) URL.revokeObjectURL(sourceRef.current);
+      sourceRef.current = URL.createObjectURL(file);
+      setSource(sourceRef.current);
+      setCrop(undefined);
       if (seq !== sequence.current) return;
       setImage(src);
       setCurrent(null);
@@ -303,24 +327,61 @@ export default function CodeDetector() {
     setBusy("scan");
     setError("");
     try {
-      const d = await api<{
-        extraction: Extraction;
-        result: ReturnType<typeof inspect>;
-        model: string;
-        inspectedAt: string;
-      }>("/api/analyze", {
-        method: "POST",
-        body: JSON.stringify({
-          image,
-          selectedId: selected || null,
-          rememberedId: remembered || null,
-        }),
+      const controller = new AbortController();
+      abortOcr.current = controller;
+      setOcrProgress({ progress: 0, message: "กำลังเตรียมตัวอ่านในมือถือ" });
+      let latest = standards;
+      if (navigator.onLine) {
+        const refreshController = new AbortController();
+        const cancelRefresh = () => refreshController.abort();
+        controller.signal.addEventListener("abort", cancelRefresh, {
+          once: true,
+        });
+        const refreshTimer = setTimeout(cancelRefresh, 8000);
+        try {
+          latest = (
+            await api<{ standards: Standard[] }>("/api/standards", {
+              signal: refreshController.signal,
+            })
+          ).standards;
+          setStandards(latest);
+          writeSetting("standards", JSON.stringify(latest));
+        } catch {
+          if (controller.signal.aborted)
+            throw new DOMException("ยกเลิกการอ่าน", "AbortError");
+          setNotice("ใช้ Standard ที่โหลดไว้ล่าสุดในเครื่อง");
+        } finally {
+          clearTimeout(refreshTimer);
+          controller.signal.removeEventListener("abort", cancelRefresh);
+        }
+      }
+      const local = await recognizeLocal(source || image, {
+        crop,
+        signal: controller.signal,
+        onProgress: (progress, message) =>
+          setOcrProgress({ progress, message }),
       });
+      const chosen = selected ? latest.find((s) => s.id === selected) : null;
+      const choice = {
+        standard: chosen || selectCodeStandard(local.extraction, latest),
+        match: chosen ? ("selected" as const) : ("automatic" as const),
+      };
+      const d = {
+        extraction: local.extraction,
+        result: inspect(
+          local.extraction,
+          choice.standard,
+          choice.standard ? choice.match : "none",
+        ),
+        model: local.model,
+        inspectedAt: new Date().toISOString(),
+      };
       const r: Report = {
         ...d.result,
         id: crypto.randomUUID(),
         createdAt: d.inspectedAt,
         image,
+        codeImage: local.codeImage,
         extraction: d.extraction,
         productName:
           d.result.standard?.name ||
@@ -331,14 +392,13 @@ export default function CodeDetector() {
         corrections: [],
       };
       await persist(r);
-      if (r.standard) remember(r.standard.id);
+      if (r.standard && r.standard.kind !== "printed_code")
+        remember(r.standard.id);
       setNotice("ตรวจเสร็จแล้ว · " + outcomeLabel[r.status]);
     } catch (e) {
-      setError(
-        navigator.onLine
-          ? (e as Error).message
-          : "ไม่มีอินเทอร์เน็ต ภาพยังอยู่ กรุณาเชื่อมต่อแล้วลองใหม่",
-      );
+      if ((e as Error).name === "AbortError")
+        setNotice("ยกเลิกการอ่านแล้ว ภาพยังอยู่");
+      else setError((e as Error).message);
     } finally {
       setBusy("");
     }
@@ -347,9 +407,13 @@ export default function CodeDetector() {
     if (!current || busy) return;
     setBusy("recheck");
     try {
-      const fresh = await api<{ standards: Standard[] }>("/api/standards");
+      const fresh = navigator.onLine
+        ? await api<{ standards: Standard[] }>("/api/standards")
+        : { standards };
       setStandards(fresh.standards);
-      const s = fresh.standards.find((s) => s.id === id && s.enabled) || null;
+      const s =
+        fresh.standards.find((s) => s.id === id && s.enabled) ||
+        (e?.code ? selectCodeStandard(e, fresh.standards) : null);
       const now = new Date().toISOString();
       const result = inspect(
         e || current.extraction,
@@ -376,7 +440,7 @@ export default function CodeDetector() {
             ]
           : current.corrections,
       });
-      if (s) remember(s.id);
+      if (s && s.kind !== "printed_code") remember(s.id);
       setCorrecting(false);
       setNotice("สร้างผลตรวจฉบับใหม่แล้ว โดยยังเก็บฉบับเดิม");
     } catch (error) {
@@ -632,6 +696,41 @@ export default function CodeDetector() {
           alt="ภาพหลักฐานที่ใช้ตรวจ"
         />
       )}
+      {r.codeImage && (
+        <details className="raw-text">
+          <summary>
+            ภาพบริเวณโค้ดที่ใช้ตรวจ
+            <ChevronDown size={15} />
+          </summary>
+          <img
+            className="report-evidence"
+            src={r.codeImage}
+            alt="ภาพบริเวณ Code จากภาพต้นฉบับ"
+          />
+        </details>
+      )}
+      {r.extraction.code && (
+        <div className="ocr-policy">
+          <strong>
+            รูปแบบที่พบ:{" "}
+            {r.extraction.code.layout
+              ? r.extraction.code.layout + " บรรทัด"
+              : "ยังยืนยันไม่ได้"}
+          </strong>
+          <p>รหัสเครื่อง: ตรวจเฉพาะการมีรหัส</p>
+          <p>
+            คะแนน OCR วันที่ {Math.round(r.extraction.code.confidence.date)} ·
+            เวลา {Math.round(r.extraction.code.confidence.time)} · รหัส{" "}
+            {Math.round(r.extraction.code.confidence.machine)}
+          </p>
+          <small>
+            เกณฑ์แต่ละช่องอย่างน้อย 85 · คะแนนนี้ไม่ใช่เปอร์เซ็นต์ความถูกต้อง
+          </small>
+          {!!r.extraction.code.manualFields?.length && (
+            <p>รายงานฉบับนี้มีข้อความที่ผู้ใช้ตรวจยืนยันกับภาพ</p>
+          )}
+        </div>
+      )}
       <div className="checks">
         {r.checks.map((c, i) => (
           <div key={i} className={"check-row " + c.status}>
@@ -683,7 +782,7 @@ export default function CodeDetector() {
       </details>
       {r.corrections.length > 0 && (
         <p className="muted small-copy">
-          มีการแก้ไขข้อความ {r.corrections.length} ครั้ง · เก็บผล AI
+          มีการแก้ไขข้อความ {r.corrections.length} ครั้ง · เก็บผลอ่าน
           เดิมในประวัติ
         </p>
       )}
@@ -758,7 +857,7 @@ export default function CodeDetector() {
           </button>
           <div className="version">
             <span>CodeDetector</span>
-            <span>v1.0</span>
+            <span>v1.1 · Local OCR</span>
           </div>
         </div>
       </aside>
@@ -844,7 +943,7 @@ export default function CodeDetector() {
           {!online && (
             <div className="alert warning">
               <WifiOff size={18} />
-              ออฟไลน์ · ดูรายงานเดิมได้ การอ่านภาพใหม่ต้องใช้อินเทอร์เน็ต
+              ออฟไลน์ · อ่านได้เมื่อโมเดลโหลดแล้ว ใช้ Standard ล่าสุดในเครื่อง
             </div>
           )}
           {error && (
@@ -915,7 +1014,7 @@ export default function CodeDetector() {
                   <div className="hero-text">
                     <span className="feature-tag">
                       <Sparkles size={13} />
-                      AI-POWERED INSPECTION
+                      ON-DEVICE OCR
                     </span>
                     <h2>
                       ภาพเดียว
@@ -923,7 +1022,7 @@ export default function CodeDetector() {
                       ตรวจได้ครบ<span className="blue-text">.</span>
                     </h2>
                     <p>
-                      อ่านวันผลิต วันหมดอายุ และรหัสเครื่องจักร
+                      อ่านวันควรบริโภคก่อน เวลา และรหัสเครื่องจักร
                       <br className="desktop-break" />
                       เทียบ Standard อัตโนมัติ พร้อมรายงานทันที
                     </p>
@@ -1079,17 +1178,39 @@ export default function CodeDetector() {
                       <div className="analyzing-overlay">
                         <div className="scan-moving-line" />
                         <LoaderCircle className="spin" size={28} />
-                        <strong>กำลังอ่านและตรวจสอบภาพ</strong>
-                        <span>โปรดรอสักครู่ ไม่ต้องปิดหน้านี้</span>
+                        <strong>{ocrProgress.message}</strong>
+                        <span>
+                          {Math.round(ocrProgress.progress * 100)}% ·
+                          ประมวลผลบนอุปกรณ์นี้
+                        </span>
                       </div>
                     )}
                     <div className="image-tools">
                       <button
                         disabled={!!busy}
+                        onClick={() => setCropping(true)}
+                      >
+                        <Crop size={17} />
+                        ครอบโค้ด
+                      </button>
+                      <button
+                        disabled={!!busy}
                         onClick={async () => {
                           setBusy("rotate");
                           try {
-                            setImage(await rotateImage(image));
+                            const blob = await rotateSource(source || image);
+                            if (sourceRef.current)
+                              URL.revokeObjectURL(sourceRef.current);
+                            sourceRef.current = URL.createObjectURL(blob);
+                            setSource(sourceRef.current);
+                            setImage(
+                              await imageFromFile(
+                                new File([blob], "rotated.jpg", {
+                                  type: "image/jpeg",
+                                }),
+                              ),
+                            );
+                            setCrop(undefined);
                             setCurrent(null);
                           } catch (e) {
                             setError((e as Error).message);
@@ -1144,7 +1265,16 @@ export default function CodeDetector() {
                       <Upload size={18} />
                       อัปโหลดภาพ
                     </button>
-                    <small>JPEG, PNG, WebP · ภาพถูกย่อก่อนส่งอ่าน</small>
+                    <small>JPEG, PNG, WebP · อ่านจากภาพบนอุปกรณ์</small>
+                  </div>
+                )}
+                {crop && (
+                  <div className="inline-message">
+                    <Crop size={15} />
+                    <span>เลือกบริเวณโค้ดแล้ว</span>
+                    <button onClick={() => setCrop(undefined)}>
+                      ใช้ภาพเต็ม
+                    </button>
                   </div>
                 )}
                 <label className="field product-selector">
@@ -1159,38 +1289,31 @@ export default function CodeDetector() {
                       if (e.target.value) remember(e.target.value);
                     }}
                   >
-                    <option value="">ระบุสินค้าจากภาพอัตโนมัติ</option>
+                    <option value="">
+                      เลือก Standard รูปแบบ Code อัตโนมัติ
+                    </option>
                     {active.map((s) => (
                       <option key={s.id} value={s.id}>
-                        {s.name} · {s.sku}
+                        {s.kind === "printed_code"
+                          ? s.name
+                          : s.name + " · " + s.sku}
                       </option>
                     ))}
                   </select>
                 </label>
-                {remembered &&
-                  active.some((s) => s.id === remembered) &&
-                  !selected && (
-                    <div className="remembered">
-                      <span>
-                        ภาพที่มีเฉพาะวันที่จะใช้:{" "}
-                        {active.find((s) => s.id === remembered)?.name}
-                      </span>
-                      <button onClick={() => remember("")}>ล้าง</button>
-                    </div>
-                  )}
                 {!active.length && !loading && (
                   <div className="inline-message warning">
                     <BookOpen size={16} />
                     <span>
-                      ยังไม่มี Standard · อ่านภาพได้ แต่ผลจะเป็น “ต้องตรวจซ้ำ”
-                      จนกว่าผู้ดูแลจะเพิ่มมาตรฐาน
+                      ยังไม่มี Standard · เชื่อมต่อเพื่อโหลดกฎก่อน ผลจะเป็น
+                      “ต้องตรวจซ้ำ” จนกว่าผู้ดูแลจะเพิ่มมาตรฐาน
                     </span>
                   </div>
                 )}
                 {image && (
                   <button
                     className="button primary analyze-button"
-                    disabled={!!busy || !online}
+                    disabled={!!busy}
                     onClick={() => void analyze()}
                   >
                     {busy === "scan" ? (
@@ -1202,9 +1325,17 @@ export default function CodeDetector() {
                     <ArrowRight size={18} />
                   </button>
                 )}
+                {busy === "scan" && (
+                  <button
+                    className="button secondary full-width"
+                    onClick={() => abortOcr.current?.abort()}
+                  >
+                    ยกเลิกการอ่าน
+                  </button>
+                )}
                 <p className="privacy-copy">
                   <LockKeyhole size={13} />
-                  ส่งภาพให้ OpenAI เมื่อกดตรวจ · ประวัติเก็บในอุปกรณ์นี้
+                  อ่านภาพในมือถือ · ไม่ส่งภาพไป OpenAI
                 </p>
               </section>
               {current ? (
@@ -1218,14 +1349,14 @@ export default function CodeDetector() {
                       {[
                         [
                           "ถ่ายให้เห็นรหัสครบ",
-                          "ให้เห็น MFG / EXP และรหัสเครื่องจักร รวมถึงชื่อสินค้าถ้าเป็นไปได้",
+                          "ให้เห็นวันที่ เวลา และรหัสเครื่องครบ ถ่ายตรงและครอบเฉพาะโค้ดเมื่ออ่านไม่ชัด",
                         ],
                         [
                           "หลีกเลี่ยงแสงสะท้อน",
                           "ปรับมุมเล็กน้อย ให้ตัวอักษรไม่ถูกแสงบังและภาพไม่เบลอ",
                         ],
                         [
-                          "ตรวจภาพก่อนส่ง",
+                          "ตรวจภาพก่อนอ่าน",
                           "หากอ่านไม่ชัด แอปจะแจ้งให้ตรวจซ้ำ พร้อมเก็บเหตุผลไว้",
                         ],
                       ].map(([a, b], i) => (
@@ -1250,10 +1381,9 @@ export default function CodeDetector() {
                       </p>
                     </div>
                   </div>
-                  {config && !config.aiReady && (
+                  {config && config.ocrMode !== "local" && (
                     <div className="inline-message warning">
-                      ยังไม่เชื่อมต่อ OpenAI API
-                      ผู้ดูแลต้องตั้งค่าก่อนอ่านภาพจริง
+                      กำลังเตรียมตัวอ่าน OCR ในเครื่อง
                     </div>
                   )}
                 </aside>
@@ -1403,13 +1533,26 @@ export default function CodeDetector() {
                       </div>
                       <h3>{s.name}</h3>
                       <p className="standard-sku">
-                        {s.sku}
+                        {s.kind === "printed_code" ? "รูปแบบ Code" : s.sku}
                         <span>v{s.revision}</span>
                       </p>
                       <div className="standard-rules">
+                        {s.codeRule && (
+                          <>
+                            <span>{s.codeRule.lines} บรรทัด</span>
+                            <span>ปีตรวจ +1</span>
+                            <span>{s.codeRule.timeFormat}</span>
+                          </>
+                        )}
                         {s.required.mfg && <span>วันผลิต</span>}
                         {s.required.exp && <span>วันหมดอายุ</span>}
-                        {s.required.machine && <span>เครื่องจักร</span>}
+                        {s.required.machine && (
+                          <span>
+                            {s.kind === "printed_code"
+                              ? "ตรวจการมีรหัส"
+                              : "เครื่องจักร"}
+                          </span>
+                        )}
                       </div>
                       <dl>
                         <div>
@@ -1429,7 +1572,7 @@ export default function CodeDetector() {
                             </dd>
                           </div>
                         )}
-                        {s.required.machine && (
+                        {s.kind !== "printed_code" && s.required.machine && (
                           <div>
                             <dt>เครื่องจักร</dt>
                             <dd>{s.machines.join(", ")}</dd>
@@ -1488,11 +1631,11 @@ export default function CodeDetector() {
                 </div>
                 {[
                   [
-                    "OpenAI · อ่านภาพผลิตภัณฑ์",
-                    !!config?.aiReady,
-                    config?.aiReady
-                      ? "ตั้งค่าคีย์แล้ว · ต้องมีเครดิต API เพื่ออ่านภาพ"
-                      : "ผู้ดูแลต้องตั้งค่า OPENAI_API_KEY",
+                    "OCR · อ่านภาพบนอุปกรณ์",
+                    config?.ocrMode === "local",
+                    config?.ocrMode === "local"
+                      ? "อ่านอักษรในมือถือ · ไม่มีค่า API ต่อภาพ"
+                      : "กำลังตรวจความพร้อมของตัวอ่าน",
                   ],
                   [
                     "Standard กลาง",
@@ -1605,13 +1748,13 @@ export default function CodeDetector() {
               <section className="card settings-card">
                 <h2>ความเป็นส่วนตัวและผลตรวจ</h2>
                 <p>
-                  AI อ่านข้อความจากภาพ โปรแกรมตรวจตามกฎที่ผู้ดูแลกำหนด
+                  OCR อ่านข้อความในมือถือ โปรแกรมตรวจตามกฎที่ผู้ดูแลกำหนด
                   หากหลักฐานไม่ชัดเจนจะแสดง “ต้องตรวจซ้ำ”
                   ไม่รับรองว่าผ่านโดยไม่มี Standard
                 </p>
                 <p>
-                  ภาพส่งให้ OpenAI เมื่อกดตรวจ ภาพรายงานอัปโหลดเมื่อแชร์ผ่าน
-                  LIFF ลิงก์ต้นทางเปิดได้ 7 วัน สำเนาที่ผู้รับหรือ LINE
+                  ภาพไม่ส่งให้ OpenAI ภาพรายงานอัปโหลดเฉพาะเมื่อแชร์ผ่าน LIFF
+                  ลิงก์ต้นทางเปิดได้ 7 วัน สำเนาที่ผู้รับหรือ LINE
                   บันทึกไว้อาจยังอยู่
                 </p>
               </section>
@@ -1670,6 +1813,18 @@ export default function CodeDetector() {
           </button>
         </div>
       )}
+      {cropping && (
+        <CropEditor
+          source={source || image}
+          initial={crop}
+          onClose={() => setCropping(false)}
+          onSave={(box) => {
+            setCrop(box);
+            setCurrent(null);
+            setCropping(false);
+          }}
+        />
+      )}
       {editing !== undefined && (
         <StandardEditor
           value={editing}
@@ -1694,14 +1849,14 @@ export default function CodeDetector() {
             <p>
               <strong>1. ถ่ายหรืออัปโหลดภาพ</strong>
               <br />
-              ให้เห็นวันที่และรหัสชัดเจน รวมถึงชื่อสินค้าหรือ SKU เพื่อจับคู่
-              Standard
+              ให้เห็นวันที่ เวลา และรหัสครบ
+              ถ้าอ่านไม่ชัดใช้ปุ่มครอบโค้ดหรือหมุนภาพ
             </p>
             <p>
               <strong>2. กดตรวจสอบภาพนี้</strong>
               <br />
-              ดูผลพร้อมเหตุผล หากระบุสินค้าไม่ได้
-              เลือกจากรายการโดยไม่ต้องกรอกค่าเทียบ
+              เลือก Standard รูปแบบ Code อัตโนมัติ ตรวจปีตามเวลาไทย +1
+              พร้อมเหตุผลรายข้อ หากข้อมูลกำกวมจะแจ้งตรวจซ้ำ
             </p>
             <p>
               <strong>3. ดูรายงานและแชร์</strong>
