@@ -58,3 +58,17 @@ These are **real Tesseract.js 7.0.0 browser results**, not mocked extraction res
 - Existing D1/R2 sharing, seven-day links, hourly cleanup and public Site audience are retained.
 - v1 tests of authenticated writes, R2 share-image readback, SVG rejection and expiration cleanup are prior evidence; these unchanged paths were not all repeated in 1.1.
 
+## Dot-matrix reading fix — 1 November 2026, evening
+
+This section supersedes the image-1 OCR result above.
+
+- Report CD-791E13C1 exposed a real error: the old OCR read the printed final 7 as 1 (29/09/2021), and its evidence thumbnail showed the full photograph rather than the Code region.
+- The new fallback uses visible ink components to bridge nearby dots, then reads the date row with Tesseract RAW_LINE at two resolutions. It does not receive the Standard, current year or expected date, and never substitutes 2027 into OCR text.
+- Real browser result for the original IMG_1703 (1).jpg: **29/09/2027**, **16:00:32**, **BB**. Field scores **82 / 85 / 74**; result remains **review** because the date and machine do not reach 85.
+- Date rereads were 29/09/2027 at scores 82 and 70; the original 29/09/2021 at score 54 is retained as evidence in the report data. Repeated readings do not inflate confidence.
+- All OCR boxes now use original-image pixel coordinates. Report evidence is cropped from those coordinates regardless of which OCR pass wins.
+- PNG reports show Code text instead of dumping unrelated packaging OCR; the full initial OCR remains inspectable in the app and backup.
+- The unchanged one-line image-3 path remains a pass at 96/96/96. Image 2 and explicit crops remain review; no new automatic-approval claim is made for them.
+- Automated suite: **56 passed**, including blank/non-dot images, preservation of large separator/character gaps, and backup roundtrip of original text and alternate readings.
+- The 85 threshold, deterministic Standard rules, OpenAI-disabled endpoint and existing report histories are unchanged. Already saved reports are immutable; users must scan again to get the new reading.
+

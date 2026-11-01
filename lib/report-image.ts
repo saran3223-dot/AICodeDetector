@@ -216,8 +216,18 @@ export async function renderReport(report: Report): Promise<Blob> {
     text(check.reason, 56, 968, 20, "#62718a", 32);
   }
   y += 30;
-  text("ข้อความที่อ่านจากภาพ", 56, 968, 24);
-  const raw = report.extraction.rawText;
+  text(
+    report.extraction.code?.lines.length
+      ? "ข้อความบริเวณโค้ด"
+      : "ข้อความที่อ่านจากภาพ",
+    56,
+    968,
+    24,
+  );
+  const raw =
+    report.extraction.code?.manualText ||
+    report.extraction.code?.lines.map((l) => l.text).join("\n") ||
+    report.extraction.rawText;
   text(
     raw.length > 2000
       ? raw.slice(0, 2000) + "\n… ข้อความฉบับเต็มอยู่ในแอปและไฟล์สำรอง"

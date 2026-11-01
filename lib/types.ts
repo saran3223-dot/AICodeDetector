@@ -66,6 +66,9 @@ export interface OcrLine {
   words: OcrWord[];
 }
 export interface CodeEvidence {
+  coordinateSpace?: "source_pixels";
+  initialText?: string;
+  readings?: { date: string; confidence: number }[];
   engine: "tesseract.js@7.0.0";
   lines: OcrLine[];
   layout: 1 | 2 | null;

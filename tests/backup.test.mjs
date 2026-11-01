@@ -47,6 +47,12 @@ test("new report backup preserves code image, time, geometry, confidence and aud
   e.time = "12:47";
   e.code.crop = { x0: 1, y0: 2, x1: 20, y1: 30 };
   e.code.manualFields = ["exp", "time", "machine"];
+  e.code.coordinateSpace = "source_pixels";
+  e.code.initialText = "29/09/2021";
+  e.code.readings = [
+    { date: "29/09/2021", confidence: 54 },
+    { date: "29/09/2027", confidence: 82 },
+  ];
   e.code.manualText = "20102027 12:47 BB";
   e.exp = "20102027";
   e.machine = "BB";

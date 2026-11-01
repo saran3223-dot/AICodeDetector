@@ -524,6 +524,7 @@ function CodeCorrectionEditor({
             time: last[0] || null,
             machine: last[1] || null,
             code: {
+              ...report.extraction.code,
               engine: "tesseract.js@7.0.0",
               lines: report.extraction.code?.lines ?? [],
               layout: rows.length === 1 ? 1 : rows.length === 2 ? 2 : null,

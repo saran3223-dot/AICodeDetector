@@ -84,6 +84,17 @@ export const extractionSchema = z.object({
   code: z
     .object({
       engine: z.literal("tesseract.js@7.0.0"),
+      coordinateSpace: z.literal("source_pixels").optional(),
+      initialText: z.string().max(12000).optional(),
+      readings: z
+        .array(
+          z.object({
+            date: z.string().max(100),
+            confidence: z.number().min(0).max(100),
+          }),
+        )
+        .max(20)
+        .optional(),
       layout: z.union([z.literal(1), z.literal(2)]).nullable(),
       lines: z
         .array(

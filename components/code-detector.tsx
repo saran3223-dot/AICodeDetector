@@ -697,7 +697,7 @@ export default function CodeDetector() {
         />
       )}
       {r.codeImage && (
-        <details className="raw-text">
+        <details className="raw-text" open={r.status === "review"}>
           <summary>
             ภาพบริเวณโค้ดที่ใช้ตรวจ
             <ChevronDown size={15} />
@@ -775,6 +775,21 @@ export default function CodeDetector() {
           <ChevronDown size={15} />
         </summary>
         <pre>{r.extraction.rawText || "ไม่พบข้อความ"}</pre>
+        {!!r.extraction.code?.readings?.length && (
+          <p className="small-copy">
+            ผลอ่านวันที่แต่ละรอบ:{" "}
+            {r.extraction.code.readings
+              .map((x) => x.date + " (คะแนน " + Math.round(x.confidence) + ")")
+              .join(" · ")}
+          </p>
+        )}
+        {r.extraction.code?.initialText &&
+          r.extraction.code.initialText !== r.extraction.rawText && (
+            <details>
+              <summary>ผล OCR ภาพเต็มก่อนอ่านซ้ำ</summary>
+              <pre>{r.extraction.code.initialText}</pre>
+            </details>
+          )}
         {r.extraction.notes.map((n, i) => (
           <p key={i}>{n}</p>
         ))}

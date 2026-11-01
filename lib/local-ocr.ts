@@ -2,6 +2,7 @@ import type { Worker, Page, PSM, ImageLike } from "tesseract.js";
 import type { Box, Extraction, OcrLine } from "./types";
 import { extractPrintedCode, codeRegion } from "./code-parser";
 import { preprocessPixels } from "./ocr-pixels";
+import { connectDotMatrix, sampleDotRow } from "./dot-matrix";
 import { loadImage } from "./report-image";
 let workerPromise: Promise<Worker> | null = null;
 let generation = 0;
@@ -122,6 +123,7 @@ function score(e: Extraction) {
     (e.exp ? 100 : 0) +
     (e.time ? 80 : 0) +
     (e.machine ? 30 : 0) +
+    (c.confidence.date + c.confidence.time + c.confidence.machine) * 0.3 +
     Math.min(c.confidence.date, c.confidence.time, c.confidence.machine) * 0.3
   );
 }
@@ -201,7 +203,21 @@ export async function recognizeLocal(
           { text: true, blocks: true },
         );
         assertActive();
-        const extraction = extractPrintedCode(flatten(data), data.text);
+        const toSource = (box: Box): Box => ({
+          x0: base.box.x0 + box.x0 / base.scale,
+          y0: base.box.y0 + box.y0 / base.scale,
+          x1: base.box.x0 + box.x1 / base.scale,
+          y1: base.box.y0 + box.y1 / base.scale,
+        });
+        const lines = flatten(data).map((l) => ({
+          ...l,
+          bbox: toSource(l.bbox),
+          words: l.words.map((word) => ({
+            ...word,
+            bbox: toSource(word.bbox),
+          })),
+        }));
+        const extraction = extractPrintedCode(lines, data.text);
         passes.push({
           extraction,
           box: base.box,
@@ -217,23 +233,121 @@ export async function recognizeLocal(
       )[0];
       const region = codeRegion(initial.extraction);
       if (region) {
-        await read(
-          {
-            x0: initial.box.x0 + region.x0 / initial.scale,
-            y0: initial.box.y0 + region.y0 / initial.scale,
-            x1: initial.box.x0 + region.x1 / initial.scale,
-            y1: initial.box.y0 + region.y1 / initial.scale,
-          },
-          true,
-        );
+        await read(region, true);
       }
+    }
+    const initial = [...passes].sort(
+      (a, b) => score(b.extraction) - score(a.extraction),
+    )[0];
+    const initialCode = initial.extraction.code;
+    // A separate raw-line pass reads the actual printed dots. It never sees
+    // the expected year, inspection date or selected Standard.
+    if (initialCode?.lines.length && initialCode.confidence.date < 85) {
+      const line = initialCode.lines[0];
+      const h = line.bbox.y1 - line.bbox.y0;
+      const base = draw(
+        image,
+        {
+          x0: line.bbox.x0 - h * 0.3,
+          y0: line.bbox.y0 - h * 0.05,
+          x1: line.bbox.x1 + h * 0.3,
+          y1: line.bbox.y1 + h * 0.05,
+        },
+        1100,
+      );
+      const pixels = base.canvas
+        .getContext("2d", { willReadFrequently: true })!
+        .getImageData(0, 0, base.canvas.width, base.canvas.height);
+      const ink = connectDotMatrix(
+        pixels.data,
+        base.canvas.width,
+        base.canvas.height,
+      );
+      if (ink)
+        for (const height of [80, 120]) {
+          assertActive();
+          options.onProgress(0, "กำลังอ่านตัวพิมพ์แบบจุดทีละบรรทัด");
+          const sampled = sampleDotRow(
+            ink,
+            base.canvas.width,
+            base.canvas.height,
+            height,
+          );
+          const canvas = document.createElement("canvas");
+          canvas.width = sampled.width;
+          canvas.height = sampled.height;
+          canvas
+            .getContext("2d")!
+            .putImageData(
+              new ImageData(sampled.data, sampled.width, sampled.height),
+              0,
+              0,
+            );
+          await w.setParameters({ tessedit_pageseg_mode: "13" as PSM });
+          const png = await new Promise<Blob>((resolve, reject) =>
+            canvas.toBlob(
+              (blob) =>
+                blob
+                  ? resolve(blob)
+                  : reject(new Error("เตรียมบรรทัดไม่สำเร็จ")),
+              "image/png",
+            ),
+          );
+          const bytes = new Uint8Array(await png.arrayBuffer());
+          assertActive();
+          const { data } = await w.recognize(
+            bytes as unknown as ImageLike,
+            {},
+            { text: true, blocks: true },
+          );
+          assertActive();
+          const rows = flatten(data);
+          if (rows.length !== 1) continue;
+          const toSource = (box: Box): Box => ({
+            x0:
+              base.box.x0 + (box.x0 / sampled.scale - sampled.pad) / base.scale,
+            y0:
+              base.box.y0 + (box.y0 / sampled.scale - sampled.pad) / base.scale,
+            x1:
+              base.box.x0 + (box.x1 / sampled.scale - sampled.pad) / base.scale,
+            y1:
+              base.box.y0 + (box.y1 / sampled.scale - sampled.pad) / base.scale,
+          });
+          const row = {
+            ...rows[0],
+            bbox: toSource(rows[0].bbox),
+            words: rows[0].words.map((word) => ({
+              ...word,
+              bbox: toSource(word.bbox),
+            })),
+          };
+          const lines = [row, ...initialCode.lines.slice(1)];
+          const extraction = extractPrintedCode(
+            lines,
+            lines.map((l) => l.text).join("\n"),
+          );
+          if (!extraction.exp || !extraction.time) continue;
+          passes.push({
+            extraction,
+            box: base.box,
+            scale: base.scale,
+            canvas: base.canvas,
+          });
+        }
     }
     assertActive();
     passes.sort((a, b) => score(b.extraction) - score(a.extraction));
     const best = passes[0],
       e = best.extraction;
     if (e.code) {
-      e.code.crop = best.box;
+      e.code.coordinateSpace = "source_pixels";
+      e.code.initialText = initial.extraction.rawText;
+      e.code.readings = passes
+        .filter((p) => p.extraction.exp)
+        .map((p) => ({
+          date: p.extraction.exp!,
+          confidence: p.extraction.code!.confidence.date,
+        }));
       const strong = passes.filter(
         (p) => p.extraction.exp && p.extraction.time,
       );
@@ -273,9 +387,10 @@ export async function recognizeLocal(
           e.ambiguousFields.push(field);
       }
     }
-    const evidence = e.code?.lines.length
-      ? best.canvas.toDataURL("image/jpeg", 0.94)
-      : undefined;
+    const region = codeRegion(e);
+    const crop = region ? draw(image, region, 1600) : null;
+    if (e.code && crop) e.code.crop = crop.box;
+    const evidence = crop?.canvas.toDataURL("image/jpeg", 0.94);
     return {
       extraction: e,
       codeImage: evidence,
